@@ -12,7 +12,7 @@ import torch.multiprocessing as mp
 model_map = json.loads(open('config/model2path.json', encoding='utf-8').read())
 maxlen_map = json.loads(open('config/model2maxlen.json', encoding='utf-8').read())
 
-URL = "http://127.0.0.1:8000/v1"
+URL = "http://127.0.0.1:30000/v1"
 API_KEY = "token-abc123"
 template_rag = open('prompts/0shot_rag.txt', encoding='utf-8').read()
 template_no_context = open('prompts/0shot_no_context.txt', encoding='utf-8').read()
@@ -20,7 +20,7 @@ template_0shot = open('prompts/0shot.txt', encoding='utf-8').read()
 template_0shot_cot = open('prompts/0shot_cot.txt', encoding='utf-8').read()
 template_0shot_cot_ans = open('prompts/0shot_cot_ans.txt', encoding='utf-8').read()
 
-def query_llm(prompt, model, tokenizer, client=None, temperature=0.5, max_new_tokens=128, stop=None):
+def query_llm(prompt, model, tokenizer, client=None, temperature=0.5, stop=None):
     # truncate
     max_len = maxlen_map[model]
     if model in model_map:
@@ -43,9 +43,8 @@ def query_llm(prompt, model, tokenizer, client=None, temperature=0.5, max_new_to
                 model=model,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=temperature,
-                max_tokens=max_new_tokens,
             )
-            return completion.choices[0].message.content
+            return completion.choices[0].message.content or ''
         except KeyboardInterrupt as e:
             raise e
         except Exception as e:
@@ -53,7 +52,7 @@ def query_llm(prompt, model, tokenizer, client=None, temperature=0.5, max_new_to
             time.sleep(1)
     else:
         print("Max tries. Failed.")
-        return ''
+        return None
 
 def extract_answer(response):
     response = response.replace('*', '')
@@ -91,19 +90,33 @@ def get_pred(data, args, fout):
         else:
             template = template_0shot
         prompt = template.replace('$DOC$', context.strip()).replace('$Q$', item['question'].strip()).replace('$C_A$', item['choice_A'].strip()).replace('$C_B$', item['choice_B'].strip()).replace('$C_C$', item['choice_C'].strip()).replace('$C_D$', item['choice_D'].strip())
-        if args.cot:
-            output = query_llm(prompt, model, tokenizer, client, temperature=0.1, max_new_tokens=1024)
-        else:
-            output = query_llm(prompt, model, tokenizer, client, temperature=0.1, max_new_tokens=128)
+        output = query_llm(prompt, model, tokenizer, client, temperature=0.1)
+        if output is None:
+            continue
         if output == '':
+            item['response'] = ''
+            item['pred'] = None
+            item['judge'] = False
+            item['context'] = context[:1000]
+            fout.write(json.dumps(item, ensure_ascii=False) + '\n')
+            fout.flush()
             continue
         if args.cot: # extract answer
             response = output.strip()
             item['response_cot'] = response
             prompt = template_0shot_cot_ans.replace('$DOC$', context.strip()).replace('$Q$', item['question'].strip()).replace('$C_A$', item['choice_A'].strip()).replace('$C_B$', item['choice_B'].strip()).replace('$C_C$', item['choice_C'].strip()).replace('$C_D$', item['choice_D'].strip()).replace('$COT$', response)
-            output = query_llm(prompt, model, tokenizer, client, temperature=0.1, max_new_tokens=128)
-            if output == '':
+            output = query_llm(prompt, model, tokenizer, client, temperature=0.1)
+            if output is None:
                 continue
+            if output == '':
+                item['response'] = ''
+                item['pred'] = None
+                item['judge'] = False
+                item['context'] = context[:1000]
+                fout.write(json.dumps(item, ensure_ascii=False) + '\n')
+                fout.flush()
+                continue
+        print(output)
         response = output.strip()
         item['response'] = response
         item['pred'] = extract_answer(response)
@@ -150,7 +163,7 @@ def main():
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--save_dir", "-s", type=str, default="results")
-    parser.add_argument("--model", "-m", type=str, default="GLM-4-9B-Chat")
+    parser.add_argument("--model", "-m", type=str, default="Qwen3.5-35B-A3B")
     parser.add_argument("--cot", "-cot", action='store_true') # set to True if using COT
     parser.add_argument("--no_context", "-nc", action='store_true') # set to True if using no context (directly measuring memorization)
     parser.add_argument("--rag", "-rag", type=int, default=0) # set to 0 if RAG is not used, otherwise set to N when using top-N retrieved context
