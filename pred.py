@@ -43,6 +43,8 @@ def query_llm(prompt, model, tokenizer, client=None, temperature=0.5, stop=None)
                 model=model,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=temperature,
+                max_tokens=32678,
+                extra_body={"presence_penalty": 1.5, "repetition_penalty": 1.0},
             )
             return completion.choices[0].message.content or ''
         except KeyboardInterrupt as e:
